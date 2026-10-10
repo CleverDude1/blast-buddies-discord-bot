@@ -17,6 +17,30 @@ async function readRawBody(req) {
   return Buffer.concat(chunks);
 }
 
+async function getDailyLeaderboard() {
+  const response = await fetch(
+    "https://na1-ping.blastbuddies.io/api/leaderboard/day",
+    { signal: AbortSignal.timeout(2000) }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Game API returned HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const players = payload?.data?.top ?? payload?.top ?? [];
+
+  if (!Array.isArray(players) || players.length === 0) {
+    throw new Error("No leaderboard entries were returned");
+  }
+
+  return players.slice(0, 10);
+}
+
+function formatNumber(value) {
+  return (Number(value) || 0).toLocaleString("en-US");
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
