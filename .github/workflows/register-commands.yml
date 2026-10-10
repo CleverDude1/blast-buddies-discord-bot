@@ -1,0 +1,26 @@
+
+name: Register Discord Commands
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Register /daily command
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          curl --fail-with-body --silent --show-error \
+            -X PUT \
+            "https://discord.com/api/v10/applications/1558601726653898833/guilds/1556494544957345872/commands" \
+            -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '[{"name":"daily","description":"View the Blast Buddies daily leaderboard"}]'
