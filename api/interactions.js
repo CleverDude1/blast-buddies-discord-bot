@@ -11,7 +11,9 @@ async function readRawBody(req) {
   const chunks = [];
 
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    chunks.push(
+      Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    );
   }
 
   return Buffer.concat(chunks);
@@ -20,18 +22,28 @@ async function readRawBody(req) {
 async function getDailyLeaderboard() {
   const response = await fetch(
     "https://na1-ping.blastbuddies.io/api/leaderboard/day",
-    { signal: AbortSignal.timeout(2000) }
+    {
+      signal: AbortSignal.timeout(5000)
+    }
   );
 
   if (!response.ok) {
-    throw new Error(`Game API returned HTTP ${response.status}`);
+    throw new Error(
+      `Game API returned HTTP ${response.status}`
+    );
   }
 
   const payload = await response.json();
-  const players = payload?.data?.top ?? payload?.top ?? [];
+
+  const players =
+    payload?.data?.top ??
+    payload?.top ??
+    [];
 
   if (!Array.isArray(players) || players.length === 0) {
-    throw new Error("No leaderboard entries were returned");
+    throw new Error(
+      "No leaderboard entries were returned"
+    );
   }
 
   return players.slice(0, 10);
@@ -52,7 +64,9 @@ export default async function handler(req, res) {
   const publicKey = process.env.DISCORD_PUBLIC_KEY;
 
   if (!signature || !timestamp || !publicKey) {
-    return res.status(401).send("Missing signature information");
+    return res.status(401).send(
+      "Missing signature information"
+    );
   }
 
   let rawBody;
@@ -60,17 +74,27 @@ export default async function handler(req, res) {
   try {
     rawBody = await readRawBody(req);
   } catch {
-    return res.status(400).send("Could not read request body");
+    return res.status(400).send(
+      "Could not read request body"
+    );
   }
 
-  const valid = nacl.sign.detached.verify(
-    Buffer.from(timestamp + rawBody.toString("utf8")),
-    Buffer.from(signature, "hex"),
-    Buffer.from(publicKey, "hex")
-  );
+  let valid;
+
+  try {
+    valid = nacl.sign.detached.verify(
+      Buffer.from(timestamp + rawBody.toString("utf8")),
+      Buffer.from(signature, "hex"),
+      Buffer.from(publicKey, "hex")
+    );
+  } catch {
+    valid = false;
+  }
 
   if (!valid) {
-    return res.status(401).send("Invalid request signature");
+    return res.status(401).send(
+      "Invalid request signature"
+    );
   }
 
   let interaction;
@@ -81,33 +105,71 @@ export default async function handler(req, res) {
     return res.status(400).send("Invalid JSON");
   }
 
-  // Discord checks the endpoint using a PING.
+  // Discord endpoint verification
   if (interaction.type === 1) {
-    return res.status(200).json({ type: 1 });
+    return res.status(200).json({
+      type: 1
+    });
   }
 
-  // Handle slash commands.
+  // Slash commands
   if (interaction.type === 2) {
     if (interaction.data?.name === "daily") {
-      return res.status(200).json({
-        type: 4,
-        data: {
-          embeds: [
-            {
-              title: "🏆 Blast Buddies — Daily Leaderboard",
-              description:
-                "The bot is connected! Real leaderboard data will be added next.",
-              color: 0x5865F2,
-              footer: {
-                text: "Blast Buddies Tracker"
-              },
-              timestamp: new Date().toISOString()
-            }
-          ]
-        }
-      });
+      try {
+        const players = await getDailyLeaderboard();
+
+        const description = players
+          .map((player, index) => {
+            const rank = index + 1;
+            const name = player.name || "Unknown";
+
+            const clan = player.clanTag
+              ? ` [${player.clanTag}]`
+              : "";
+
+            return (
+              `**${rank}.** ${name}${clan}\n` +
+              `⚔️ ${formatNumber(player.kills)} kills` +
+              ` · ☠️ ${formatNumber(player.deaths)} deaths` +
+              ` · 🤝 ${formatNumber(player.assists)} assists`
+            );
+          })
+          .join("\n\n");
+
+        return res.status(200).json({
+          type: 4,
+          data: {
+            embeds: [
+              {
+                title: "🏆 Blast Buddies — Daily Leaderboard",
+                description,
+                color: 0x5865F2,
+                footer: {
+                  text: "Blast Buddies Tracker • Top 10"
+                },
+                timestamp: new Date().toISOString()
+              }
+            ]
+          }
+        });
+      } catch (error) {
+        console.error(
+          "Daily leaderboard error:",
+          error
+        );
+
+        return res.status(200).json({
+          type: 4,
+          data: {
+            content:
+              "⚠️ I couldn't retrieve the daily leaderboard right now. Please try again shortly.",
+            flags: 64
+          }
+        });
+      }
     }
 
+    // Commands not implemented yet
     return res.status(200).json({
       type: 4,
       data: {
@@ -117,5 +179,7 @@ export default async function handler(req, res) {
     });
   }
 
-  return res.status(400).send("Unsupported interaction type");
+  return res.status(400).send(
+    "Unsupported interaction type"
+  );
 }
