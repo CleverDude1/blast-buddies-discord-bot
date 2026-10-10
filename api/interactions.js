@@ -7,6 +7,9 @@ export const config = {
   }
 };
 
+const PAGE_SIZE = 10;
+const MAX_PLAYERS = 50;
+
 async function readRawBody(req) {
   const chunks = [];
 
@@ -46,11 +49,114 @@ async function getDailyLeaderboard() {
     );
   }
 
-  return players.slice(0, 10);
+  return players.slice(0, MAX_PLAYERS);
 }
 
 function formatNumber(value) {
   return (Number(value) || 0).toLocaleString("en-US");
+}
+
+function buildLeaderboardEmbed(players, page) {
+  const start = page * PAGE_SIZE;
+  const pagePlayers = players.slice(
+    start,
+    start + PAGE_SIZE
+  );
+
+  const description = pagePlayers
+    .map((player, index) => {
+      const rank = start + index + 1;
+      const name = player.name || "Unknown";
+
+      const clan = player.clanTag
+        ? ` [${player.clanTag}]`
+        : "";
+
+      return (
+        `**${rank}.** ${name}${clan}\n` +
+        `⚔️ ${formatNumber(player.kills)} kills` +
+        ` · ☠️ ${formatNumber(player.deaths)} deaths`
+      );
+    })
+    .join("\n\n");
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(players.length / PAGE_SIZE)
+  );
+
+  return {
+    title: "🏆 Blast Buddies — Daily Leaderboard",
+    description,
+    color: 0x5865F2,
+    footer: {
+      text:
+        `Players ${start + 1}–${start + pagePlayers.length}` +
+        ` of ${players.length} • Page ${page + 1}/${totalPages}`
+    },
+    timestamp: new Date().toISOString()
+  };
+}
+
+function buildPageButtons(page, playerCount) {
+  const totalPages = Math.max(
+    1,
+    Math.ceil(playerCount / PAGE_SIZE)
+  );
+
+  return [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 2,
+          label: "◀ Previous",
+          custom_id: `daily_page:${page - 1}`,
+          disabled: page <= 0
+        },
+        {
+          type: 2,
+          style: 2,
+          label: `${page + 1} / ${totalPages}`,
+          custom_id: "daily_page:current",
+          disabled: true
+        },
+        {
+          type: 2,
+          style: 2,
+          label: "Next ▶",
+          custom_id: `daily_page:${page + 1}`,
+          disabled: page >= totalPages - 1
+        }
+      ]
+    }
+  ];
+}
+
+function buildLeaderboardResponse(players, page, responseType) {
+  const totalPages = Math.max(
+    1,
+    Math.ceil(players.length / PAGE_SIZE)
+  );
+
+  const safePage = Math.max(
+    0,
+    Math.min(page, totalPages - 1)
+  );
+
+  return {
+    type: responseType,
+    data: {
+      embeds: [
+        buildLeaderboardEmbed(players, safePage)
+      ],
+      components: buildPageButtons(
+        safePage,
+        players.length
+      )
+    }
+  };
 }
 
 export default async function handler(req, res) {
@@ -112,46 +218,64 @@ export default async function handler(req, res) {
     });
   }
 
-  // Slash commands
+  // Handle Previous and Next button clicks
+  if (interaction.type === 3) {
+    const customId = interaction.data?.custom_id || "";
+
+    if (customId.startsWith("daily_page:")) {
+      const requestedPage = customId.split(":")[1];
+
+      if (requestedPage === "current") {
+        return res.status(200).json({
+          type: 6
+        });
+      }
+
+      const page = Number(requestedPage);
+
+      if (!Number.isInteger(page) || page < 0) {
+        return res.status(200).json({
+          type: 6
+        });
+      }
+
+      try {
+        const players = await getDailyLeaderboard();
+
+        return res.status(200).json(
+          buildLeaderboardResponse(players, page, 7)
+        );
+      } catch (error) {
+        console.error(
+          "Daily leaderboard page error:",
+          error
+        );
+
+        return res.status(200).json({
+          type: 4,
+          data: {
+            content:
+              "⚠️ Couldn't load the next leaderboard page. Please try again.",
+            flags: 64
+          }
+        });
+      }
+    }
+
+    return res.status(200).json({
+      type: 6
+    });
+  }
+
+  // Handle slash commands
   if (interaction.type === 2) {
     if (interaction.data?.name === "daily") {
       try {
         const players = await getDailyLeaderboard();
 
-        const description = players
-          .map((player, index) => {
-            const rank = index + 1;
-            const name = player.name || "Unknown";
-
-            const clan = player.clanTag
-              ? ` [${player.clanTag}]`
-              : "";
-
-            return (
-              `**${rank}.** ${name}${clan}\n` +
-              `⚔️ ${formatNumber(player.kills)} kills` +
-              ` · ☠️ ${formatNumber(player.deaths)} deaths` +
-              ` · 🤝 ${formatNumber(player.assists)} assists`
-            );
-          })
-          .join("\n\n");
-
-        return res.status(200).json({
-          type: 4,
-          data: {
-            embeds: [
-              {
-                title: "🏆 Blast Buddies — Daily Leaderboard",
-                description,
-                color: 0x5865F2,
-                footer: {
-                  text: "Blast Buddies Tracker • Top 10"
-                },
-                timestamp: new Date().toISOString()
-              }
-            ]
-          }
-        });
+        return res.status(200).json(
+          buildLeaderboardResponse(players, 0, 4)
+        );
       } catch (error) {
         console.error(
           "Daily leaderboard error:",
@@ -169,7 +293,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Commands not implemented yet
     return res.status(200).json({
       type: 4,
       data: {
